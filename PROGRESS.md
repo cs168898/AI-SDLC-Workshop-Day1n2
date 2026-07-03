@@ -1,7 +1,7 @@
 # Implementation Progress Report
 
 > **Date**: 2026-07-03
-> **Status**: Features 01–08 implemented, Features 09–11 not started
+> **Status**: Features 01–11 ALL IMPLEMENTED
 > **Dev server**: Confirmed running at `http://localhost:3000` (Next.js 15.5.20)
 
 ---
@@ -11,7 +11,7 @@
 | Decision | Choice | Reason |
 |----------|--------|--------|
 | Database | `node:sqlite` (built-in `DatabaseSync`) | `better-sqlite3` fails to compile on Node.js 26 (C++20 requirement). `node:sqlite` is built-in since Node 22, no native compilation needed. |
-| Auth (dev) | Username-only login with JWT | WebAuthn (Feature 11) deferred. Simple stub creates/finds user and issues JWT cookie. |
+| Auth | WebAuthn/Passkeys + username fallback | WebAuthn (Feature 11) fully implemented. Dev fallback "Quick Sign In" retained for local development. |
 | Sections naming | "Pending" (not "Active") | USER_GUIDE.md uses "Pending" consistently. EVALUATION.md says "Active" — we follow USER_GUIDE per priority rules. |
 | Delete behavior | Immediate, no confirmation | USER_GUIDE.md explicitly states "No confirmation dialog". EVALUATION.md conflicts but USER_GUIDE takes priority. |
 
@@ -196,27 +196,71 @@
 
 ---
 
-## Not Yet Started
+### ✅ Feature 09: Export & Import
 
-### ⬜ Feature 09: Export & Import
-- `GET /api/todos/export?format={json|csv}`
-- `POST /api/todos/import`
-- JSON export with all relationships
-- CSV export (spreadsheet-friendly)
-- ID remapping on import
+- [x] API: `GET /api/todos/export?format=json|csv` — exports todos with subtasks/tags (JSON) or flat spreadsheet (CSV)
+- [x] API: `POST /api/todos/import` — imports from JSON, remaps IDs, reuses existing tags by name
+- [x] JSON export includes: todos, subtasks (nested), tags (nested), completion status, all metadata
+- [x] CSV export: spreadsheet-friendly with ID, Title, Completed, Due Date, Priority, Recurring, Pattern, Reminder columns
+- [x] Import creates new todos with new IDs, preserves subtasks and tags
+- [x] Tag conflict resolution: reuses existing tags by name, creates new ones if needed
+- [x] UI: "Export JSON" button, "Export CSV" button, "Import" file picker (all in header)
+- [x] Success message shows count of imported todos
+- [x] Content-Disposition headers with dated filenames
 
-### ⬜ Feature 10: Calendar View
-- `/calendar` page
-- `holidays` table + `GET /api/holidays`
-- Monthly grid with month navigation
-- Todos on their due dates (color-coded by priority)
-- Singapore public holidays display
+**Files:**
+- `app/api/todos/export/route.ts` — GET export endpoint (JSON + CSV formats)
+- `app/api/todos/import/route.ts` — POST import endpoint
+- `app/page.tsx` — Export/Import buttons in header
 
-### ⬜ Feature 11: WebAuthn/Passkeys Authentication
-- `authenticators` table
-- `@simplewebauthn/server` + `@simplewebauthn/browser`
-- Registration + login challenge/verify flows
-- Replace current username-only stub
+---
+
+### ✅ Feature 10: Calendar View
+
+- [x] `/calendar` page with full monthly grid
+- [x] `holidays` table auto-seeded with 2026 Singapore public holidays (11 holidays)
+- [x] `GET /api/holidays?year=YYYY` endpoint
+- [x] Month navigation: prev (◀), next (▶), Today button
+- [x] Current day highlighted with blue ring
+- [x] Weekend cells with gray background
+- [x] Todos displayed on due dates with priority color dots (red/yellow/blue)
+- [x] Multiple todos stack; shows first 3 with "+N more" indicator
+- [x] Holiday display with 🎉 badge and red background
+- [x] Click-to-view day detail modal (shows all todos + holidays for that day)
+- [x] Color legend at bottom
+- [x] "← Back to Todos" navigation button
+- [x] Suspense boundary wrapping useSearchParams for Next.js build compatibility
+- [x] `holidayDB.findByYear()` and `holidayDB.findByMonth()` in lib/db.ts
+
+**Files:**
+- `app/calendar/page.tsx` — Calendar view UI (~290 lines)
+- `app/api/holidays/route.ts` — GET holidays by year
+- `lib/db.ts` — `holidayDB` export + holidays table schema + seedHolidays function
+
+---
+
+### ✅ Feature 11: WebAuthn/Passkeys Authentication
+
+- [x] `authenticators` table for credential storage (credential_id, public_key, counter, transports)
+- [x] Installed: `@simplewebauthn/server` + `@simplewebauthn/browser`
+- [x] `POST /api/auth/register-options` — generates registration challenge
+- [x] `POST /api/auth/register-verify` — verifies registration, stores authenticator, creates session
+- [x] `POST /api/auth/login-options` — generates authentication challenge
+- [x] `POST /api/auth/login-verify` — verifies authentication, updates counter, creates session
+- [x] Challenge stored in HTTP-only cookies (5-minute expiry)
+- [x] Counter update on each successful login (replay protection)
+- [x] Login page updated with dual mode: "Sign In with Passkey" + "Register Passkey"
+- [x] Dev fallback "Quick Sign In" button still available for development
+- [x] Uses `isoBase64URL` from `@simplewebauthn/server/helpers` for credential encoding
+- [x] Environment variables: RP_ID (default: localhost), RP_NAME, ORIGIN
+
+**Files:**
+- `app/api/auth/register-options/route.ts` — Registration challenge generation
+- `app/api/auth/register-verify/route.ts` — Registration verification
+- `app/api/auth/login-options/route.ts` — Login challenge generation
+- `app/api/auth/login-verify/route.ts` — Login verification
+- `app/login/page.tsx` — Updated with WebAuthn login/register + dev fallback
+- `lib/db.ts` — `authenticatorDB` export + authenticators table schema
 
 ---
 
@@ -227,6 +271,7 @@
 3. **Duplicate JWT_SECRET initialization** — Same logic in `lib/auth.ts` and `middleware.ts`. Could extract to shared module.
 4. **No E2E tests yet** — Playwright not installed. Tests should be added per EVALUATION.md requirements.
 5. **`next-env.d.ts`** — Auto-generated by Next.js on first dev run. Already created.
+6. **WebAuthn production env vars** — `RP_ID` and `ORIGIN` environment variables must be set for production WebAuthn. Defaults to `localhost` / `http://localhost:3000` for local dev.
 
 ---
 
@@ -236,19 +281,26 @@
 lib/
 ├── types.ts          — Shared Priority + RecurrencePattern types
 ├── timezone.ts       — Singapore timezone utilities + calculateNextDueDate
-├── db.ts             — Database singleton, schema, userDB, todoDB, subtaskDB, tagDB, templateDB (node:sqlite)
+├── db.ts             — Database singleton, schema, userDB, todoDB, subtaskDB, tagDB, templateDB, holidayDB, authenticatorDB (node:sqlite)
 └── auth.ts           — JWT session helpers (create, read, clear)
 
 app/
 ├── globals.css       — Tailwind import
 ├── layout.tsx        — Root layout
 ├── page.tsx          — Main todo UI (monolithic, ~1100 lines currently)
-├── login/page.tsx    — Login form
+├── login/page.tsx    — Login form with WebAuthn + dev fallback
+├── calendar/page.tsx — Calendar monthly view (~290 lines)
 └── api/
     ├── auth/
     │   ├── login/route.ts
     │   ├── logout/route.ts
-    │   └── me/route.ts
+    │   ├── me/route.ts
+    │   ├── register-options/route.ts  — WebAuthn registration challenge
+    │   ├── register-verify/route.ts   — WebAuthn registration verify
+    │   ├── login-options/route.ts     — WebAuthn login challenge
+    │   └── login-verify/route.ts      — WebAuthn login verify
+    ├── holidays/
+    │   └── route.ts          — GET holidays by year
     ├── notifications/
     │   └── check/route.ts    — GET due reminders
     ├── subtasks/
@@ -263,6 +315,8 @@ app/
     │       └── use/route.ts  — POST create todo from template
     └── todos/
         ├── route.ts          — GET all + POST create
+        ├── export/route.ts   — GET export (JSON + CSV)
+        ├── import/route.ts   — POST import
         └── [id]/
             ├── route.ts      — GET one + PUT update + DELETE
             ├── subtasks/route.ts — POST create subtask
@@ -273,7 +327,7 @@ next.config.ts        — Next.js config
 tsconfig.json         — TypeScript config
 postcss.config.mjs    — Tailwind PostCSS
 package.json          — Dependencies (no native modules)
-.env.local            — JWT_SECRET
+.env.local            — JWT_SECRET, RP_ID, RP_NAME, ORIGIN
 .gitignore            — node_modules, .next, todos.db, .env.local
 ```
 
@@ -281,16 +335,17 @@ package.json          — Dependencies (no native modules)
 
 ## How to Continue
 
-1. **Install dependencies**: `npm install` (already done, 324 packages)
+1. **Install dependencies**: `npm install` (already done)
 2. **Start dev server**: `npm run dev` → http://localhost:3000
-3. **Next feature to implement**: Feature 09 (Export & Import)
-4. **Remaining features**: 09-Export/Import, 10-Calendar View, 11-WebAuthn Authentication
-5. **Testing**: Install Playwright (`npm init playwright@latest`) and create test files per EVALUATION.md
+3. **All features complete** — focus on testing and deployment
+4. **Testing**: Install Playwright (`npm init playwright@latest`) and create test files per EVALUATION.md
+5. **Linting**: Create `eslint.config.mjs` for Next.js flat config
+6. **Production**: Set `RP_ID`, `RP_NAME`, `ORIGIN` env vars for WebAuthn in production
 
-### Implementation Order (remaining)
+### Next Steps
 ```
-Phase 4: 09-Export/Import, 10-Calendar
-Phase 5: 11-Authentication (WebAuthn)
+Phase 6: E2E Testing (Playwright) — all 11 features need test coverage
+Phase 7: Production readiness (ESLint, env config, deployment)
 ```
 
 ### Important Constraints
@@ -298,4 +353,5 @@ Phase 5: 11-Authentication (WebAuthn)
 - API routes: always `await params` for dynamic segments (Next.js 15+)
 - Database operations are synchronous (`node:sqlite` DatabaseSync)
 - Main UI stays in `app/page.tsx` (monolithic pattern per project convention)
+- WebAuthn: use `?? 0` for counter field to handle undefined values
 - USER_GUIDE.md takes priority over EVALUATION.md when they conflict
