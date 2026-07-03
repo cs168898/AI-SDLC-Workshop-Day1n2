@@ -74,6 +74,23 @@ export interface Template {
   created_at: string;
 }
 
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+  year: number;
+}
+
+export interface Authenticator {
+  id: number;
+  user_id: number;
+  credential_id: string;
+  credential_public_key: string;
+  counter: number;
+  transports: string | null;
+  created_at: string;
+}
+
 // ─── Database Singleton ───────────────────────────────────────────────────────
 
 const DB_PATH = path.join(process.cwd(), "todos.db");
@@ -160,7 +177,51 @@ function initSchema(db: DatabaseSync): void {
       subtasks_json      TEXT,
       created_at         TEXT    NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS holidays (
+      id    INTEGER PRIMARY KEY AUTOINCREMENT,
+      date  TEXT    NOT NULL,
+      name  TEXT    NOT NULL,
+      year  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS authenticators (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id               INTEGER NOT NULL
+                              REFERENCES users(id) ON DELETE CASCADE,
+      credential_id         TEXT    NOT NULL UNIQUE,
+      credential_public_key TEXT    NOT NULL,
+      counter               INTEGER NOT NULL DEFAULT 0,
+      transports            TEXT,
+      created_at            TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  // Seed Singapore public holidays for current and next year if empty
+  const count = db.prepare("SELECT COUNT(*) as cnt FROM holidays").get() as unknown as { cnt: number };
+  if (count.cnt === 0) {
+    seedHolidays(db);
+  }
+}
+
+function seedHolidays(db: DatabaseSync): void {
+  const holidays = [
+    { date: "2026-01-01", name: "New Year's Day", year: 2026 },
+    { date: "2026-01-29", name: "Chinese New Year", year: 2026 },
+    { date: "2026-01-30", name: "Chinese New Year (Day 2)", year: 2026 },
+    { date: "2026-03-31", name: "Hari Raya Puasa", year: 2026 },
+    { date: "2026-04-03", name: "Good Friday", year: 2026 },
+    { date: "2026-05-01", name: "Labour Day", year: 2026 },
+    { date: "2026-05-12", name: "Vesak Day", year: 2026 },
+    { date: "2026-06-07", name: "Hari Raya Haji", year: 2026 },
+    { date: "2026-08-09", name: "National Day", year: 2026 },
+    { date: "2026-10-20", name: "Deepavali", year: 2026 },
+    { date: "2026-12-25", name: "Christmas Day", year: 2026 },
+  ];
+  const stmt = db.prepare("INSERT INTO holidays (date, name, year) VALUES (?, ?, ?)");
+  for (const h of holidays) {
+    stmt.run(h.date, h.name, h.year);
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -689,5 +750,71 @@ export const templateDB = {
       .prepare("DELETE FROM templates WHERE id = ? AND user_id = ?")
       .run(id, userId);
     return Number(result.changes) > 0;
+  },
+};
+
+// ─── Holiday DB ───────────────────────────────────────────────────────────────
+
+export const holidayDB = {
+  findByYear(year: number): Holiday[] {
+    return getDb()
+      .prepare("SELECT * FROM holidays WHERE year = ? ORDER BY date ASC")
+      .all(year) as unknown as Holiday[];
+  },
+
+  findByMonth(year: number, month: number): Holiday[] {
+    const prefix = `${year}-${String(month).padStart(2, "0")}`;
+    return getDb()
+      .prepare("SELECT * FROM holidays WHERE date LIKE ?")
+      .all(`${prefix}%`) as unknown as Holiday[];
+  },
+
+  findAll(): Holiday[] {
+    return getDb()
+      .prepare("SELECT * FROM holidays ORDER BY date ASC")
+      .all() as unknown as Holiday[];
+  },
+};
+
+// ─── Authenticator DB ─────────────────────────────────────────────────────────
+
+export const authenticatorDB = {
+  findByUserId(userId: number): Authenticator[] {
+    return getDb()
+      .prepare("SELECT * FROM authenticators WHERE user_id = ?")
+      .all(userId) as unknown as Authenticator[];
+  },
+
+  findByCredentialId(credentialId: string): Authenticator | null {
+    return getDb()
+      .prepare("SELECT * FROM authenticators WHERE credential_id = ?")
+      .get(credentialId) as unknown as Authenticator | null;
+  },
+
+  create(
+    userId: number,
+    data: {
+      credential_id: string;
+      credential_public_key: string;
+      counter: number;
+      transports?: string | null;
+    }
+  ): Authenticator {
+    const db = getDb();
+    const result = db
+      .prepare(
+        `INSERT INTO authenticators (user_id, credential_id, credential_public_key, counter, transports)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(userId, data.credential_id, data.credential_public_key, data.counter, data.transports ?? null);
+    return db
+      .prepare("SELECT * FROM authenticators WHERE id = ?")
+      .get(toId(result.lastInsertRowid)) as unknown as Authenticator;
+  },
+
+  updateCounter(credentialId: string, counter: number): void {
+    getDb()
+      .prepare("UPDATE authenticators SET counter = ? WHERE credential_id = ?")
+      .run(counter, credentialId);
   },
 };

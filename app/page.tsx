@@ -861,6 +861,68 @@ export default function HomePage() {
             >
               + Manage Tags
             </button>
+            <button
+              onClick={() => router.push("/calendar")}
+              className="text-sm px-3 py-1.5 rounded-lg bg-purple-200 hover:bg-purple-300
+                         dark:bg-purple-900/30 dark:hover:bg-purple-900/60 text-purple-900 dark:text-purple-200
+                         transition-colors"
+            >
+              📅 Calendar
+            </button>
+            <button
+              onClick={() => window.location.href = "/api/todos/export?format=json"}
+              className="text-sm px-3 py-1.5 rounded-lg bg-green-100 hover:bg-green-200
+                         dark:bg-green-900/50 dark:hover:bg-green-900/80 text-green-800 dark:text-green-200
+                         transition-colors"
+            >
+              Export JSON
+            </button>
+            <button
+              onClick={() => window.location.href = "/api/todos/export?format=csv"}
+              className="text-sm px-3 py-1.5 rounded-lg bg-green-200 hover:bg-green-300
+                         dark:bg-green-900/30 dark:hover:bg-green-900/60 text-green-900 dark:text-green-200
+                         transition-colors"
+            >
+              Export CSV
+            </button>
+            <label
+              className="text-sm px-3 py-1.5 rounded-lg bg-blue-100 hover:bg-blue-200
+                         dark:bg-blue-900/50 dark:hover:bg-blue-900/80 text-blue-800 dark:text-blue-200
+                         transition-colors cursor-pointer"
+            >
+              Import
+              <input
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const text = await file.text();
+                    const data = JSON.parse(text);
+                    const res = await fetch("/api/todos/import", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(data),
+                    });
+                    if (res.ok) {
+                      const result = await res.json();
+                      alert(result.message);
+                      // Refresh todos
+                      const todosRes = await fetch("/api/todos");
+                      if (todosRes.ok) setTodos(await todosRes.json());
+                    } else {
+                      const err = await res.json();
+                      alert(err.error ?? "Failed to import todos");
+                    }
+                  } catch {
+                    alert("Failed to import todos. Please check the file format.");
+                  }
+                  e.target.value = "";
+                }}
+              />
+            </label>
             {username && (
               <span className="text-sm text-gray-500 dark:text-gray-400">👤 {username}</span>
             )}
